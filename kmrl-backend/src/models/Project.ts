@@ -7,7 +7,7 @@ export class ProjectModel {
     const client = await pgPool.connect();
     try {
       const query = `
-        INSERT INTO projects (name, description, status, progress, team_size, start_date, end_date, created_by)
+        INSERT INTO projects (name, description, department, status, priority, created_by, start_date, end_date)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
         RETURNING *
       `;
@@ -15,12 +15,12 @@ export class ProjectModel {
       const values = [
         projectData.name,
         projectData.description || null,
-        projectData.status || 'active',
-        projectData.progress || 0,
-        projectData.team_size || 0,
+        projectData.department,
+        projectData.status || 'planning',
+        projectData.priority || 'medium',
+        projectData.created_by,
         projectData.start_date || null,
-        projectData.end_date || null,
-        (projectData as any).created_by || null
+        projectData.end_date || null
       ];
       
       const result = await client.query(query, values);
@@ -148,13 +148,9 @@ export class ProjectModel {
         updateFields.push(`status = $${++paramCount}`);
         values.push(updateData.status);
       }
-      if (updateData.progress !== undefined) {
-        updateFields.push(`progress = $${++paramCount}`);
-        values.push(updateData.progress);
-      }
-      if (updateData.team_size !== undefined) {
-        updateFields.push(`team_size = $${++paramCount}`);
-        values.push(updateData.team_size);
+      if (updateData.priority !== undefined) {
+        updateFields.push(`priority = $${++paramCount}`);
+        values.push(updateData.priority);
       }
       if (updateData.start_date !== undefined) {
         updateFields.push(`start_date = $${++paramCount}`);

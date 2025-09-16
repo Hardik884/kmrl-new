@@ -9,9 +9,10 @@ export class DocumentModel {
       const query = `
         INSERT INTO documents (
           filename, original_filename, file_size, mime_type, file_path,
-          s3_key, project_id, uploaded_by, status, metadata
+          file_hash, project_id, department, uploaded_by, urgency_level,
+          ai_summary, ai_keywords, processing_status
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
         RETURNING *
       `;
       
@@ -21,11 +22,14 @@ export class DocumentModel {
         documentData.file_size,
         documentData.mime_type,
         documentData.file_path,
-        (documentData as any).s3_key || null,
+        documentData.file_hash,
         documentData.project_id || null,
+        documentData.department,
         documentData.uploaded_by,
-        documentData.status || 'pending',
-        JSON.stringify(documentData.metadata || {})
+        documentData.urgency_level || 'routine',
+        documentData.ai_summary || null,
+        documentData.ai_keywords || null,
+        documentData.processing_status || 'pending'
       ];
       
       const result = await client.query(query, values);
@@ -208,9 +212,13 @@ export class DocumentModel {
           whereConditions.push(`d.project_id = $${++paramCount}`);
           values.push(searchQuery.filters.project_id);
         }
-        if (searchQuery.filters.confidence_min) {
-          whereConditions.push(`d.confidence_score >= $${++paramCount}`);
-          values.push(searchQuery.filters.confidence_min);
+        if (searchQuery.filters.department) {
+          whereConditions.push(`d.department = $${++paramCount}`);
+          values.push(searchQuery.filters.department);
+        }
+        if (searchQuery.filters.urgency_level) {
+          whereConditions.push(`d.urgency_level = $${++paramCount}`);
+          values.push(searchQuery.filters.urgency_level);
         }
         if (searchQuery.filters.date_range) {
           whereConditions.push(`d.created_at >= $${++paramCount} AND d.created_at <= $${++paramCount}`);
@@ -233,9 +241,9 @@ export class DocumentModel {
       // Build ORDER BY clause
       let orderBy = 'ORDER BY d.created_at DESC';
       if (searchQuery.sort === 'relevance' && searchQuery.query) {
-        orderBy = `ORDER BY ts_rank(to_tsvector('english', COALESCE(d.ocr_text, '')), plainto_tsquery('english', '${searchQuery.query}')) DESC`;
-      } else if (searchQuery.sort === 'confidence') {
-        orderBy = 'ORDER BY d.confidence_score DESC NULLS LAST';
+        orderBy = `ORDER BY ts_rank(to_tsvector('english', COALESCE(d.ai_summary, d.filename)), plainto_tsquery('english', '${searchQuery.query}')) DESC`;
+      } else if (searchQuery.sort === 'urgency') {
+        orderBy = "ORDER BY CASE d.urgency_level WHEN 'critical' THEN 1 WHEN 'urgent' THEN 2 WHEN 'priority' THEN 3 ELSE 4 END";
       }
 
       // Get search results
