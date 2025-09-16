@@ -1,234 +1,245 @@
 import { useState } from "react";
-import { Upload, FileText, Image, FileSpreadsheet, File, CheckCircle, X, Brain } from "lucide-react";
+import {
+  UploadCloud,
+  File as FileIcon,
+  CheckCircle2,
+  XCircle,
+  Loader2,
+  FileText,
+  FileImage,
+  FileSpreadsheet,
+  FileArchive,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { cn } from "@/lib/utils";
+
+type FileStatus = "pending" | "uploading" | "processing" | "completed" | "error";
+
+interface UploadedFile {
+  id: number;
+  name: string;
+  size: string;
+  status: FileStatus;
+  progress: number;
+  classification?: string;
+  confidence?: number;
+}
+
+const initialFiles: UploadedFile[] = [
+  { id: 1, name: "Metro_Construction_Contract.pdf", size: "2.4 MB", status: "pending", progress: 0 },
+  { id: 2, name: "Environmental_Impact_Report.docx", size: "1.8 MB", status: "pending", progress: 0 },
+  { id: 3, name: "Technical_Drawings_Archive.zip", size: "15.2 MB", status: "pending", progress: 0 },
+  { id: 4, name: "Station_Blueprint.png", size: "4.1 MB", status: "pending", progress: 0 },
+];
+
+const fileIcons: { [key: string]: React.ElementType } = {
+  pdf: FileText,
+  docx: FileText,
+  png: FileImage,
+  jpg: FileImage,
+  xlsx: FileSpreadsheet,
+  zip: FileArchive,
+  default: FileIcon,
+};
+
+const getFileIcon = (fileName: string) => {
+  const extension = fileName.split('.').pop()?.toLowerCase() || "default";
+  return fileIcons[extension] || fileIcons.default;
+};
 
 export const DocumentUpload = () => {
+  const [files, setFiles] = useState<UploadedFile[]>(initialFiles);
   const [isDragOver, setIsDragOver] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(0);
-  const [isProcessing, setIsProcessing] = useState(false);
   const { toast } = useToast();
 
-  const mockFiles = [
-    { id: 1, name: "Metro_Construction_Contract.pdf", type: "contract", size: "2.4 MB", confidence: 98, status: "processed" },
-    { id: 2, name: "Environmental_Impact_Report.docx", type: "report", size: "1.8 MB", confidence: 95, status: "processing" },
-    { id: 3, name: "Technical_Drawings.dwg", type: "technical", size: "5.2 MB", confidence: 92, status: "pending" },
-  ];
-
-  const fileIcons = {
-    pdf: FileText,
-    doc: FileText,
-    docx: FileText,
-    xlsx: FileSpreadsheet,
-    jpg: Image,
-    png: Image,
-    dwg: File,
-  };
-
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(true);
-  };
-
-  const handleDragLeave = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    setIsDragOver(false);
-    simulateUpload();
-  };
-
-  const simulateUpload = () => {
-    setIsProcessing(true);
-    setUploadProgress(0);
-    
-    const interval = setInterval(() => {
-      setUploadProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsProcessing(false);
-          toast({
-            title: "Upload Complete",
-            description: "Documents have been processed successfully with AI classification.",
-          });
-          return 100;
-        }
-        return prev + 10;
-      });
-    }, 200);
-  };
-
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case "processed": return "bg-success text-success-foreground";
-      case "processing": return "bg-warning text-warning-foreground";
-      case "pending": return "bg-muted text-muted-foreground";
-      default: return "bg-muted text-muted-foreground";
+  const handleFileAction = () => {
+    const pendingFiles = files.filter((f) => f.status === "pending");
+    if (pendingFiles.length === 0) {
+        toast({ title: "No files to upload", description: "All files have been processed." });
+        return;
     }
+
+    pendingFiles.forEach(file => {
+        simulateUpload(file.id);
+    });
   };
 
-  const getFileIcon = (fileName: string) => {
-    const extension = fileName.split('.').pop()?.toLowerCase() || 'file';
-    return fileIcons[extension as keyof typeof fileIcons] || File;
+  const simulateUpload = (fileId: number) => {
+    setFiles(prev => prev.map(f => f.id === fileId ? { ...f, status: "uploading", progress: 0 } : f));
+
+    const uploadInterval = setInterval(() => {
+      setFiles(prev => prev.map(f => {
+        if (f.id === fileId && f.status === "uploading" && f.progress < 100) {
+          const newProgress = f.progress + 20;
+          return { ...f, progress: newProgress };
+        }
+        return f;
+      }));
+    }, 200);
+
+    setTimeout(() => {
+      clearInterval(uploadInterval);
+      setFiles(prev => prev.map(f => f.id === fileId ? { ...f, status: "processing", progress: 100 } : f));
+      
+      setTimeout(() => {
+        const isError = Math.random() > 0.9;
+        const fileName = files.find(f=>f.id === fileId)?.name || "File";
+        setFiles(prev => prev.map(f => f.id === fileId ? { 
+            ...f, 
+            status: isError ? "error" : "completed",
+            classification: isError ? undefined : ['Contract', 'Report', 'Drawing', 'Invoice'][Math.floor(Math.random() * 4)],
+            confidence: isError ? undefined : Math.floor(Math.random() * 15) + 85,
+        } : f));
+
+        if (!isError) {
+            toast({
+                title: "Processing Complete",
+                description: `"${fileName}" has been classified.`,
+                variant: "default",
+            });
+        } else {
+            toast({
+                title: "Processing Error",
+                description: `Failed to process "${fileName}".`,
+                variant: "destructive",
+            });
+        }
+      }, 1000 + Math.random() * 1000);
+    }, 1200);
+  };
+
+  const StatusBadge = ({ status }: { status: FileStatus }) => {
+    const statusConfig = {
+      pending: { icon: <Loader2 className="animate-spin" />, text: "Pending", color: "bg-slate-100 text-slate-600" },
+      uploading: { icon: <Loader2 className="animate-spin" />, text: "Uploading...", color: "bg-blue-100 text-blue-600" },
+      processing: { icon: <Loader2 className="animate-spin" />, text: "Processing...", color: "bg-yellow-100 text-yellow-600" },
+      completed: { icon: <CheckCircle2 />, text: "Completed", color: "bg-green-100 text-green-600" },
+      error: { icon: <XCircle />, text: "Error", color: "bg-red-100 text-red-600" },
+    };
+    const { icon, text, color } = statusConfig[status];
+    return (
+      <Badge variant="outline" className={cn("flex items-center gap-1.5 border-0", color)}>
+        {icon}
+        {text}
+      </Badge>
+    );
   };
 
   return (
-    <section id="documents" className="py-16 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-7xl mx-auto space-y-8">
-        {/* Header */}
-        <div className="text-center space-y-4">
-          <h2 className="text-3xl lg:text-4xl font-heading font-bold text-foreground">
+    <section id="documents" className="py-16 px-4 sm:px-6 lg:px-8 bg-slate-50/50">
+      <div className="max-w-7xl mx-auto space-y-10">
+        <div className="text-left space-y-2">
+          <h2 className="text-3xl lg:text-4xl font-bold text-slate-900 tracking-tight">
             Smart Document Processing
           </h2>
-          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
-            Upload documents for AI-powered classification, OCR processing, and automated workflow routing
+          <p className="text-lg text-slate-600 max-w-3xl">
+            Upload documents for AI-powered classification, OCR, and automated workflow routing.
           </p>
         </div>
 
-        {/* Upload Area */}
-        <Card className="border-0 shadow-metro">
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Upload className="h-5 w-5 text-primary" />
-              <span>Document Upload</span>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div
-              className={`relative border-2 border-dashed rounded-lg p-8 text-center smooth-transition ${
-                isDragOver 
-                  ? "border-primary bg-primary/5 shadow-glow" 
-                  : "border-border hover:border-primary/50"
-              }`}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-            >
-              <div className="space-y-4">
-                <div className="flex justify-center">
-                  <div className="w-16 h-16 bg-gradient-metro rounded-full flex items-center justify-center">
-                    <Upload className="h-8 w-8 text-white" />
-                  </div>
+        <div className="grid lg:grid-cols-3 gap-8 items-start">
+          <Card 
+            className={cn(
+                "lg:col-span-1 border-2 border-dashed border-slate-300 shadow-none transition-all duration-300",
+                isDragOver && "border-blue-500 bg-blue-50"
+            )}
+            onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={(e) => { e.preventDefault(); setIsDragOver(false); handleFileAction(); }}
+          >
+            <CardContent className="p-8 flex flex-col items-center justify-center text-center space-y-4 h-full">
+                <div className={cn(
+                    "flex items-center justify-center h-16 w-16 rounded-full bg-slate-100 transition-all duration-300",
+                    isDragOver && "bg-blue-100 scale-110"
+                )}>
+                    <UploadCloud className={cn("h-8 w-8 text-slate-500", isDragOver && "text-blue-500")} />
                 </div>
-                
-                <div className="space-y-2">
-                  <h3 className="text-xl font-heading font-semibold text-foreground">
-                    Drop files here or click to browse
-                  </h3>
-                  <p className="text-muted-foreground">
-                    Supports PDF, DOC, DOCX, XLSX, JPG, PNG, CAD files up to 20MB
-                  </p>
-                </div>
-
-                <Button 
-                  className="bg-gradient-metro text-white shadow-glow hover:shadow-elevated smooth-transition"
-                  onClick={simulateUpload}
-                >
-                  Select Files
-                </Button>
-
-                {isProcessing && (
-                  <div className="space-y-2">
-                    <Progress value={uploadProgress} className="w-full max-w-md mx-auto" />
-                    <p className="text-sm text-muted-foreground">
-                      Processing documents... {uploadProgress}%
+                <div className="space-y-1">
+                    <h3 className="text-lg font-semibold text-slate-800">
+                        Drop files here or click to upload
+                    </h3>
+                    <p className="text-sm text-slate-500">
+                        Supports PDF, DOCX, PNG, JPG, XLSX, ZIP
                     </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Processing Queue */}
-        <div className="grid lg:grid-cols-2 gap-8">
-          {/* File List */}
-          <Card className="border-0 shadow-metro">
-            <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <FileText className="h-5 w-5 text-secondary" />
-                <span>Processing Queue</span>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-4">
-                {mockFiles.map((file) => {
-                  const IconComponent = getFileIcon(file.name);
-                  return (
-                    <div key={file.id} className="flex items-center justify-between p-4 bg-muted/30 rounded-lg">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 bg-card rounded-lg flex items-center justify-center shadow-metro">
-                          <IconComponent className="h-5 w-5 text-primary" />
-                        </div>
-                        <div>
-                          <p className="font-medium text-foreground">{file.name}</p>
-                          <p className="text-sm text-muted-foreground">{file.size}</p>
-                        </div>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <Badge className={getStatusColor(file.status)}>
-                          {file.status}
-                        </Badge>
-                        {file.status === "processed" && (
-                          <CheckCircle className="h-4 w-4 text-success" />
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+                </div>
+                <Button 
+                  variant="outline"
+                  className="mt-4 bg-white border-slate-300 hover:bg-slate-50 text-slate-700"
+                  onClick={handleFileAction}
+                >
+                  Browse Files
+                </Button>
             </CardContent>
           </Card>
 
-          {/* AI Classification Results */}
-          <Card className="border-0 shadow-metro">
+          <Card className="lg:col-span-2 border-slate-200/80 shadow-sm">
             <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <Brain className="h-5 w-5 text-accent" />
-                <span>AI Classification Results</span>
-              </CardTitle>
+              <CardTitle>Processing Queue</CardTitle>
+              <CardDescription>
+                Monitor your documents as they are uploaded and processed by our AI.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-4">
-                {mockFiles.map((file) => (
-                  <div key={file.id} className="p-4 bg-muted/30 rounded-lg space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="font-medium text-foreground">
-                        {file.name.split('.')[0]}
-                      </span>
-                      <Badge variant="outline" className="bg-gradient-metro text-white border-0">
-                        {file.confidence}% confidence
-                      </Badge>
-                    </div>
-                    
-                    <div className="space-y-2">
-                      <div className="flex justify-between text-sm">
-                        <span className="text-muted-foreground">Document Type:</span>
-                        <span className="font-medium text-foreground capitalize">{file.type}</span>
-                      </div>
-                      <Progress value={file.confidence} className="h-2" />
-                    </div>
-
-                    <div className="flex flex-wrap gap-2">
-                      <Badge variant="secondary" className="text-xs">
-                        OCR Extracted
-                      </Badge>
-                      <Badge variant="secondary" className="text-xs">
-                        Auto-Tagged
-                      </Badge>
-                      <Badge variant="secondary" className="text-xs">
-                        Routed to Workflow
-                      </Badge>
-                    </div>
-                  </div>
-                ))}
-              </div>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[250px]">File Name</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead>Classification</TableHead>
+                    <TableHead className="text-right">Size</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {files.map((file) => {
+                    const Icon = getFileIcon(file.name);
+                    return (
+                      <TableRow key={file.id}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-3">
+                            <Icon className="h-5 w-5 text-slate-500" />
+                            <span className="truncate">{file.name}</span>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <div className="flex flex-col gap-1">
+                            <StatusBadge status={file.status} />
+                            {(file.status === 'uploading' || file.status === 'processing') && (
+                                <Progress value={file.progress} className="h-1 w-24" />
+                            )}
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                            {file.status === 'completed' && file.classification && (
+                                <div className="flex flex-col">
+                                    <span className="font-medium text-slate-800">{file.classification}</span>
+                                    <span className="text-xs text-slate-500">Confidence: {file.confidence}%</span>
+                                </div>
+                            )}
+                        </TableCell>
+                        <TableCell className="text-right text-slate-500">{file.size}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
         </div>
