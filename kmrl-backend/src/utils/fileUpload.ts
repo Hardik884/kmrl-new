@@ -1,46 +1,77 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
-import sharp from 'sharp';
+import crypto from 'crypto';
 import { v4 as uuidv4 } from 'uuid';
 import config from '../config';
 import logger from './logger';
 
-// Ensure upload directory exists
+// Ensure upload directory structure exists
 const uploadDir = config.upload.uploadDir;
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
+const createDirectoryStructure = () => {
+  const dirs = [
+    path.join(uploadDir, 'documents'),
+    path.join(uploadDir, 'documents', 'temp'),
+    path.join(uploadDir, 'documents', 'engineering'),
+    path.join(uploadDir, 'documents', 'finance'),
+    path.join(uploadDir, 'documents', 'hr'),
+    path.join(uploadDir, 'documents', 'safety'),
+    path.join(uploadDir, 'documents', 'legal'),
+    path.join(uploadDir, 'documents', 'operations'),
+    path.join(uploadDir, 'documents', 'management'),
+    path.join(uploadDir, 'ml-queue')
+  ];
+  
+  dirs.forEach(dir => {
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+      logger.info(`Created directory: ${dir}`);
+    }
+  });
+};
 
-// Configure multer storage
+// Initialize directory structure
+createDirectoryStructure();
+
+// Configure multer storage with organized directory structure
 const storage = multer.diskStorage({
   destination: (req, file, cb) => {
-    const userDir = path.join(uploadDir, 'temp');
-    if (!fs.existsSync(userDir)) {
-      fs.mkdirSync(userDir, { recursive: true });
+    // Organize files by department if specified in request
+    const department = req.body.department || 'documents';
+    const departmentDir = path.join(uploadDir, 'documents', department.toLowerCase());
+    
+    // Create department directory if it doesn't exist
+    if (!fs.existsSync(departmentDir)) {
+      fs.mkdirSync(departmentDir, { recursive: true });
     }
-    cb(null, userDir);
+    
+    cb(null, departmentDir);
   },
   filename: (req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${uuidv4()}`;
+    // Generate unique filename with timestamp and UUID
+    const timestamp = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+    const uniqueId = uuidv4().substring(0, 8);
     const extension = path.extname(file.originalname);
-    cb(null, `${uniqueSuffix}${extension}`);
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+    
+    const filename = `${timestamp}_${uniqueId}_${safeName}`;
+    cb(null, filename);
   }
 });
 
-// File filter function
+// File filter - Support multiple document formats
 const fileFilter = (req: any, file: Express.Multer.File, cb: multer.FileFilterCallback) => {
-  const allowedExtensions = config.upload.supportedFormats;
-  const fileExtension = path.extname(file.originalname).toLowerCase().substring(1);
+  const allowedExtensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.xlsx', '.dwg', '.dxf', '.bmp', '.tiff'];
+  const fileExtension = path.extname(file.originalname).toLowerCase();
   
   if (allowedExtensions.includes(fileExtension)) {
     cb(null, true);
   } else {
-    cb(new Error(`File type .${fileExtension} is not supported. Allowed types: ${allowedExtensions.join(', ')}`));
+    cb(new Error(`File type ${fileExtension} is not supported. Allowed types: ${allowedExtensions.join(', ')}`));
   }
 };
 
-// Create multer instance
+// Create multer instance for document uploads
 export const upload = multer({
   storage,
   fileFilter,
@@ -53,8 +84,9 @@ export const upload = multer({
 // File validation utilities
 export class FileValidator {
   static isValidFileType(filename: string): boolean {
-    const extension = path.extname(filename).toLowerCase().substring(1);
-    return config.upload.supportedFormats.includes(extension);
+    const allowedExtensions = ['.pdf', '.doc', '.docx', '.jpg', '.jpeg', '.png', '.xlsx', '.dwg', '.dxf', '.bmp', '.tiff'];
+    const extension = path.extname(filename).toLowerCase();
+    return allowedExtensions.includes(extension);
   }
 
   static isValidFileSize(fileSize: number): boolean {
@@ -62,172 +94,162 @@ export class FileValidator {
   }
 
   static getFileType(filename: string): string {
-    const extension = path.extname(filename).toLowerCase().substring(1);
+    const extension = path.extname(filename).toLowerCase();
     
     const typeMap: { [key: string]: string } = {
-      'pdf': 'document',
-      'doc': 'document',
-      'docx': 'document',
-      'jpg': 'image',
-      'jpeg': 'image',
-      'png': 'image',
-      'gif': 'image',
-      'xlsx': 'spreadsheet',
-      'xls': 'spreadsheet',
-      'dwg': 'cad',
-      'dxf': 'cad',
-      'txt': 'text',
-      'rtf': 'text'
+      '.pdf': 'document',
+      '.doc': 'document',
+      '.docx': 'document',
+      '.jpg': 'image',
+      '.jpeg': 'image',
+      '.png': 'image',
+      '.bmp': 'image',
+      '.tiff': 'image',
+      '.xlsx': 'spreadsheet',
+      '.dwg': 'cad',
+      '.dxf': 'cad'
     };
 
     return typeMap[extension] || 'unknown';
   }
 
-  static getMimeTypeFromExtension(filename: string): string {
-    const extension = path.extname(filename).toLowerCase().substring(1);
+  static getMimeType(filename: string): string {
+    const extension = path.extname(filename).toLowerCase();
     
     const mimeMap: { [key: string]: string } = {
-      'pdf': 'application/pdf',
-      'doc': 'application/msword',
-      'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'jpg': 'image/jpeg',
-      'jpeg': 'image/jpeg',
-      'png': 'image/png',
-      'gif': 'image/gif',
-      'xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'xls': 'application/vnd.ms-excel',
-      'dwg': 'application/acad',
-      'dxf': 'application/dxf',
-      'txt': 'text/plain',
-      'rtf': 'application/rtf'
+      '.pdf': 'application/pdf',
+      '.doc': 'application/msword',
+      '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      '.jpg': 'image/jpeg',
+      '.jpeg': 'image/jpeg',
+      '.png': 'image/png',
+      '.bmp': 'image/bmp',
+      '.tiff': 'image/tiff',
+      '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      '.dwg': 'application/acad',
+      '.dxf': 'application/dxf'
     };
 
     return mimeMap[extension] || 'application/octet-stream';
   }
 }
 
-// File processing utilities
-export class FileProcessor {
-  static async generateThumbnail(filePath: string, outputPath: string): Promise<string> {
+// Document processing utilities (with local file system)
+export class DocumentProcessor {
+  /**
+   * Generate SHA-256 hash of file for duplicate detection
+   */
+  static generateFileHash(filePath: string): string {
     try {
-      const fileType = FileValidator.getFileType(filePath);
-      
-      if (fileType === 'image') {
-        await sharp(filePath)
-          .resize(300, 300, { fit: 'inside', withoutEnlargement: true })
-          .jpeg({ quality: 80 })
-          .toFile(outputPath);
-        
-        return outputPath;
-      }
-      
-      // For non-image files, we could generate a generic thumbnail
-      // or use document preview services
-      return '';
+      const fileBuffer = fs.readFileSync(filePath);
+      return crypto.createHash('sha256').update(fileBuffer).digest('hex');
     } catch (error) {
-      logger.error('Error generating thumbnail:', error);
+      logger.error('Error generating file hash:', error);
       throw error;
+    }
+  }
+
+  /**
+   * Check if file already exists based on hash
+   */
+  static async checkDuplicate(filePath: string): Promise<boolean> {
+    try {
+      const hash = this.generateFileHash(filePath);
+      // TODO: Check database for existing file with same hash
+      // This would prevent storing duplicate files
+      return false;
+    } catch (error) {
+      logger.error('Error checking for duplicates:', error);
+      return false;
     }
   }
 
   static async extractMetadata(filePath: string): Promise<Record<string, any>> {
     try {
       const stats = fs.statSync(filePath);
-      const fileType = FileValidator.getFileType(filePath);
+      const hash = this.generateFileHash(filePath);
       
-      const metadata: Record<string, any> = {
+      return {
         size: stats.size,
         created: stats.birthtime,
         modified: stats.mtime,
-        type: fileType
+        type: FileValidator.getFileType(filePath),
+        extension: path.extname(filePath).toLowerCase(),
+        originalName: path.basename(filePath),
+        hash: hash
       };
-
-      // Extract additional metadata based on file type
-      if (fileType === 'image') {
-        const imageMetadata = await sharp(filePath).metadata();
-        metadata.dimensions = {
-          width: imageMetadata.width,
-          height: imageMetadata.height
-        };
-        metadata.format = imageMetadata.format;
-        metadata.colorSpace = imageMetadata.space;
-      }
-
-      return metadata;
     } catch (error) {
-      logger.error('Error extracting metadata:', error);
-      return {};
-    }
-  }
-
-  static async moveToFinalDestination(tempPath: string, finalPath: string): Promise<void> {
-    try {
-      // Ensure destination directory exists
-      const destinationDir = path.dirname(finalPath);
-      if (!fs.existsSync(destinationDir)) {
-        fs.mkdirSync(destinationDir, { recursive: true });
-      }
-
-      // Move file
-      fs.renameSync(tempPath, finalPath);
-      logger.info(`File moved from ${tempPath} to ${finalPath}`);
-    } catch (error) {
-      logger.error('Error moving file:', error);
+      logger.error('Error extracting document metadata:', error);
       throw error;
     }
   }
 
-  static async cleanupTempFile(filePath: string): Promise<void> {
+  static async validateDocument(filePath: string): Promise<boolean> {
     try {
-      if (fs.existsSync(filePath)) {
-        fs.unlinkSync(filePath);
-        logger.info(`Temp file cleaned up: ${filePath}`);
+      // Basic document validation - check if file exists and has content
+      if (!fs.existsSync(filePath)) {
+        return false;
       }
+      
+      const stats = fs.statSync(filePath);
+      return stats.size > 0;
     } catch (error) {
-      logger.error('Error cleaning up temp file:', error);
+      logger.error('Error validating document:', error);
+      return false;
     }
   }
 
-  static generateUniqueFilename(originalName: string): string {
-    const extension = path.extname(originalName);
-    const baseName = path.basename(originalName, extension);
-    const uniqueId = uuidv4();
-    const timestamp = Date.now();
-    
-    return `${baseName}_${timestamp}_${uniqueId}${extension}`;
+  static async moveToProcessingQueue(filePath: string, targetDir: string): Promise<string> {
+    try {
+      const filename = path.basename(filePath);
+      const targetPath = path.join(targetDir, filename);
+      
+      if (!fs.existsSync(targetDir)) {
+        fs.mkdirSync(targetDir, { recursive: true });
+      }
+      
+      fs.renameSync(filePath, targetPath);
+      logger.info(`Document moved to processing queue: ${targetPath}`);
+      return targetPath;
+    } catch (error) {
+      logger.error('Error moving document to processing queue:', error);
+      throw error;
+    }
   }
 
-  static async validateFile(filePath: string): Promise<{ valid: boolean; error?: string }> {
+  static async prepareDocumentForMLProcessing(filePath: string): Promise<{ 
+    processedPath: string; 
+    metadata: Record<string, any> 
+  }> {
     try {
-      // Check if file exists
-      if (!fs.existsSync(filePath)) {
-        return { valid: false, error: 'File does not exist' };
+      // Validate document
+      const isValidDocument = await DocumentProcessor.validateDocument(filePath);
+      if (!isValidDocument) {
+        throw new Error('Invalid document file');
       }
 
-      // Check file size
-      const stats = fs.statSync(filePath);
-      if (!FileValidator.isValidFileSize(stats.size)) {
-        return { 
-          valid: false, 
-          error: `File size exceeds maximum allowed size of ${config.upload.maxFileSize} bytes` 
-        };
-      }
+      // Extract metadata
+      const metadata = await DocumentProcessor.extractMetadata(filePath);
 
-      // Basic file integrity check
-      if (stats.size === 0) {
-        return { valid: false, error: 'File is empty' };
-      }
+      // Move to ML processing queue
+      const mlQueueDir = path.join(uploadDir, 'ml-queue');
+      const processedPath = await DocumentProcessor.moveToProcessingQueue(filePath, mlQueueDir);
 
-      return { valid: true };
+      logger.info(`Document prepared for ML processing: ${processedPath}`);
+      
+      return {
+        processedPath,
+        metadata
+      };
     } catch (error) {
-      logger.error('Error validating file:', error);
-      return { valid: false, error: 'File validation failed' };
+      logger.error('Error preparing document for ML processing:', error);
+      throw error;
     }
   }
 }
 
-// Error handling for multer
-export const handleMulterError = (error: any) => {
+// Error handling for document uploads
+export const handleDocumentUploadError = (error: any) => {
   if (error instanceof multer.MulterError) {
     switch (error.code) {
       case 'LIMIT_FILE_SIZE':
@@ -235,10 +257,18 @@ export const handleMulterError = (error: any) => {
       case 'LIMIT_FILE_COUNT':
         return 'Too many files. Maximum 10 files allowed';
       case 'LIMIT_UNEXPECTED_FILE':
-        return 'Unexpected file field';
+        return 'Unexpected file field in upload';
       default:
         return `Upload error: ${error.message}`;
     }
   }
   return error.message || 'Unknown upload error';
 };
+
+// Upload configurations for different use cases
+export const singleDocumentUpload = upload.single('document');
+export const multipleDocumentUpload = upload.array('documents', 10);
+export const fieldsDocumentUpload = upload.fields([
+  { name: 'document', maxCount: 1 },
+  { name: 'attachments', maxCount: 9 }
+]);

@@ -1,7 +1,5 @@
 import { Pool } from 'pg';
-import { MongoClient } from 'mongodb';
 import { createClient } from 'redis';
-import { Client as ElasticsearchClient } from 'elasticsearch';
 import config from './index';
 import logger from '../utils/logger';
 
@@ -22,31 +20,7 @@ pgPool.on('error', (err) => {
   logger.error('PostgreSQL connection error:', err);
 });
 
-// MongoDB Connection
-let mongoClient: MongoClient;
-let mongoDb: any;
-
-export const connectMongoDB = async () => {
-  try {
-    mongoClient = new MongoClient(config.database.mongodb);
-    await mongoClient.connect();
-    mongoDb = mongoClient.db();
-    logger.info('Connected to MongoDB database');
-    return mongoDb;
-  } catch (error) {
-    logger.error('MongoDB connection error:', error);
-    throw error;
-  }
-};
-
-export const getMongoDb = () => {
-  if (!mongoDb) {
-    throw new Error('MongoDB not connected. Call connectMongoDB() first.');
-  }
-  return mongoDb;
-};
-
-// Redis Connection
+// Redis Client for session management and caching
 export const redisClient = createClient({
   url: config.database.redis,
 });
@@ -59,49 +33,33 @@ redisClient.on('error', (err) => {
   logger.error('Redis connection error:', err);
 });
 
-// Elasticsearch Connection
-export const elasticsearchClient = new ElasticsearchClient({
-  host: config.database.elasticsearch,
-  log: config.nodeEnv === 'development' ? 'trace' : 'error',
-});
-
-// Test Elasticsearch connection
-export const testElasticsearchConnection = async () => {
+// Initialize database connections
+export async function initializeDatabase() {
   try {
-    await elasticsearchClient.ping({ requestTimeout: 3000 });
-    logger.info('Connected to Elasticsearch');
-  } catch (error) {
-    logger.error('Elasticsearch connection error:', error);
-  }
-};
-
-// Database initialization
-export const initializeDatabases = async () => {
-  try {
+    // Test PostgreSQL connection
+    const client = await pgPool.connect();
+    await client.query('SELECT NOW()');
+    client.release();
+    logger.info('PostgreSQL connection verified');
+    
     // Connect to Redis
     await redisClient.connect();
+    logger.info('Redis connection verified');
     
-    // Connect to MongoDB
-    await connectMongoDB();
-    
-    // Test Elasticsearch
-    await testElasticsearchConnection();
-    
-    logger.info('All databases connected successfully');
   } catch (error) {
     logger.error('Database initialization failed:', error);
+    // Don't throw error for demo purposes - let server start anyway
     throw error;
   }
-};
+}
 
 // Graceful shutdown
-export const closeDatabases = async () => {
+export async function closeConnections() {
   try {
     await pgPool.end();
-    await mongoClient?.close();
-    await redisClient.quit();
-    logger.info('All database connections closed');
+    await redisClient.disconnect();
+    logger.info('Database connections closed');
   } catch (error) {
     logger.error('Error closing database connections:', error);
   }
-};
+}

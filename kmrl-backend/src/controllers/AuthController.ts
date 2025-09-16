@@ -1,412 +1,261 @@
 import { Request, Response } from 'express';
-import { body } from 'express-validator';
-import { UserModel } from '../models/User';
-import { FirebaseService } from '../services/FirebaseService';
+import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import { User } from '../models/User';
 import logger from '../utils/logger';
-import { APIResponse } from '../types';
-import { AuthenticatedRequest } from '../middleware/auth';
-
-const firebaseService = FirebaseService.getInstance();
 
 export class AuthController {
-  // Validation for Google sign-in
-  static googleSignInValidation = [
-    body('idToken')
-      .notEmpty()
-      .withMessage('Firebase ID token is required')
-  ];
-
-  // Validation for email sign-up (if supporting email/password)
-  static emailSignUpValidation = [
-    body('idToken')
-      .notEmpty()
-      .withMessage('Firebase ID token is required'),
-    body('email')
-      .isEmail()
-      .normalizeEmail()
-      .withMessage('Valid email is required')
-  ];
-
   /**
-   * Handle Google Sign-In
+   * User login with username/email and password
    */
-  static async googleSignIn(req: Request, res: Response): Promise<void> {
+  static async login(req: Request, res: Response): Promise<void> {
     try {
-      const { idToken } = req.body;
+      const { username, password } = req.body;
 
-      // Validate Google token
-      const validation = await firebaseService.validateGoogleToken(idToken);
-      
-      if (!validation.valid) {
+      if (!username || !password) {
         res.status(400).json({
           success: false,
-          error: validation.error || 'Invalid Google token',
-          timestamp: new Date().toISOString()
-        } as APIResponse);
+          message: 'Username and password are required'
+        });
         return;
       }
 
-      const userInfo = validation.userInfo!;
+      // Find user by username or email
+      const user = await User.findByUsernameOrEmail(username);
+      if (!user) {
+        res.status(401).json({
+          success: false,
+          message: 'Invalid credentials'
+        });
+        return;
+      }
 
-      // Extract Google user data
-      const googleId = userInfo.uid; // Firebase UID is used as Google ID
-      const [firstName, ...lastNameParts] = (userInfo.name || '').split(' ');
+      // Check if user is active
+      if (!user.is_active) {
+        res.status(401).json({
+          success: false,
+          message: 'Account is deactivated'
+        });
+        return;
+      }
 
-      // Create or update user in database
-      const user = await UserModel.createOrUpdateGoogleUser({
-        email: userInfo.email,
-        firebase_uid: userInfo.uid,
-        google_id: googleId,
-        first_name: firstName || undefined,
-        last_name: lastNameParts.join(' ') || undefined,
-        avatar_url: userInfo.picture || undefined
-      });
+      // Verify password
+      const isValidPassword = await bcrypt.compare(password, user.password_hash);
+      if (!isValidPassword) {
+        res.status(401).json({
+          success: false,
+          message: 'Invalid credentials'
+        });
+        return;
+      }
 
-      // Create session cookie for better security
-      const expiresIn = 5 * 24 * 60 * 60 * 1000; // 5 days
-      const sessionCookie = await firebaseService.createSessionCookie(idToken, expiresIn);
-      
-      // Store session in database
-      const expiresAt = new Date(Date.now() + expiresIn);
-      await UserModel.storeSession(
-        user.id,
-        user.firebase_uid,
-        sessionCookie,
-        expiresAt,
-        req.ip,
-        req.get('User-Agent')
+      // Generate JWT token
+      const token = jwt.sign(
+        {
+          userId: user.id,
+          username: user.username,
+          department: user.department,
+          role: user.role
+        },
+        process.env.JWT_SECRET || 'kmrl-secret-key',
+        { expiresIn: '8h' } // 8 hour work day
       );
 
-      // Set session cookie
-      res.cookie('session', sessionCookie, {
-        maxAge: expiresIn,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict'
+      // Update last login
+      await User.updateLastLogin(user.id);
+
+      // Remove password from response
+      const { password_hash, ...userResponse } = user;
+
+      res.json({
+        success: true,
+        message: 'Login successful',
+        user: userResponse,
+        token
       });
 
-      res.status(200).json({
-        success: true,
-        data: {
-          user: {
-            id: user.id,
-            email: user.email,
-            first_name: user.first_name,
-            last_name: user.last_name,
-            avatar_url: user.avatar_url,
-            role: user.role,
-            provider: user.provider,
-            created_at: user.created_at
-          },
-          session: {
-            expires_at: expiresAt.toISOString()
-          }
-        },
-        message: 'Google sign-in successful',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
-
-      logger.info(`Google sign-in successful: ${user.email}`);
+      logger.info(`User ${user.username} logged in successfully`);
     } catch (error) {
-      logger.error('Google sign-in error:', error);
+      logger.error('Login error:', error);
       res.status(500).json({
         success: false,
-        error: 'Google sign-in failed',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
+        message: 'Internal server error'
+      });
     }
   }
 
   /**
-   * Handle email/password sign-up (if needed)
+   * Create new user (admin only)
    */
-  static async emailSignUp(req: Request, res: Response): Promise<void> {
+  static async createUser(req: Request, res: Response): Promise<void> {
     try {
-      const { idToken, email } = req.body;
+      const {
+        username,
+        email,
+        password,
+        employee_id,
+        department,
+        role,
+        first_name,
+        last_name,
+        phone
+      } = req.body;
 
-      // Verify Firebase ID token
-      const decodedToken = await firebaseService.verifyIdToken(idToken);
-      
-      if (decodedToken.email !== email) {
+      // Validate required fields
+      if (!username || !email || !password || !department || !first_name || !last_name) {
         res.status(400).json({
           success: false,
-          error: 'Token email does not match provided email',
-          timestamp: new Date().toISOString()
-        } as APIResponse);
+          message: 'Required fields: username, email, password, department, first_name, last_name'
+        });
         return;
       }
 
-      // Check if user already exists
-      const existingUser = await UserModel.findByEmail(email);
-      if (existingUser) {
-        res.status(409).json({
-          success: false,
-          error: 'User already exists with this email',
-          timestamp: new Date().toISOString()
-        } as APIResponse);
-        return;
-      }
+      // Hash password
+      const saltRounds = 12;
+      const password_hash = await bcrypt.hash(password, saltRounds);
 
-      // Create new user
-      const user = await UserModel.create({
-        email: decodedToken.email!,
-        firebase_uid: decodedToken.uid,
-        first_name: decodedToken.name?.split(' ')[0] || undefined,
-        last_name: decodedToken.name?.split(' ').slice(1).join(' ') || undefined,
-        provider: 'email'
-      });
-
-      // Create session cookie
-      const expiresIn = 5 * 24 * 60 * 60 * 1000; // 5 days
-      const sessionCookie = await firebaseService.createSessionCookie(idToken, expiresIn);
-      
-      const expiresAt = new Date(Date.now() + expiresIn);
-      await UserModel.storeSession(
-        user.id,
-        user.firebase_uid,
-        sessionCookie,
-        expiresAt,
-        req.ip,
-        req.get('User-Agent')
-      );
-
-      res.cookie('session', sessionCookie, {
-        maxAge: expiresIn,
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'strict'
+      // Create user
+      const userId = await User.create({
+        username,
+        email,
+        password_hash,
+        employee_id,
+        department,
+        role: role || 'employee',
+        first_name,
+        last_name,
+        phone
       });
 
       res.status(201).json({
         success: true,
-        data: {
-          user: {
-            id: user.id,
-            email: user.email,
-            first_name: user.first_name,
-            last_name: user.last_name,
-            role: user.role,
-            provider: user.provider,
-            created_at: user.created_at
-          }
-        },
-        message: 'Email sign-up successful',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
+        message: 'User created successfully',
+        userId
+      });
 
-      logger.info(`Email sign-up successful: ${user.email}`);
+      logger.info(`New user created: ${username} (${department})`);
     } catch (error) {
-      logger.error('Email sign-up error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Email sign-up failed',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
+      logger.error('User creation error:', error);
+      
+      if ((error as any).code === '23505') { // PostgreSQL unique constraint violation
+        res.status(409).json({
+          success: false,
+          message: 'Username or email already exists'
+        });
+      } else {
+        res.status(500).json({
+          success: false,
+          message: 'Internal server error'
+        });
+      }
     }
   }
 
   /**
-   * Verify authentication status
+   * Get current user profile
    */
-  static async verifyAuth(req: AuthenticatedRequest, res: Response): Promise<void> {
+  static async getProfile(req: Request, res: Response): Promise<void> {
     try {
-      const user = req.user;
-
-      res.status(200).json({
-        success: true,
-        data: {
-          user: {
-            id: user.id,
-            email: user.email,
-            first_name: user.first_name,
-            last_name: user.last_name,
-            avatar_url: user.avatar_url,
-            role: user.role,
-            provider: user.provider,
-            last_login: user.last_login,
-            created_at: user.created_at
-          },
-          firebase_uid: user.firebase_uid
-        },
-        timestamp: new Date().toISOString()
-      } as APIResponse);
-    } catch (error) {
-      logger.error('Auth verification error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Authentication verification failed',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
-    }
-  }
-
-  /**
-   * Logout user
-   */
-  static async logout(req: AuthenticatedRequest, res: Response): Promise<void> {
-    try {
-      const user = req.user;
-      const sessionCookie = req.cookies?.session;
-
-      // Revoke session cookie from database
-      if (sessionCookie) {
-        await UserModel.revokeSession(sessionCookie);
+      const userId = (req as any).user.userId;
+      
+      const user = await User.findById(userId);
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+        return;
       }
 
-      // Revoke Firebase refresh tokens
-      await firebaseService.revokeRefreshTokens(user.firebase_uid);
+      // Remove password from response
+      const { password_hash, ...userProfile } = user;
 
-      // Clear session cookie
-      res.clearCookie('session');
-
-      res.status(200).json({
+      res.json({
         success: true,
-        message: 'Logout successful',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
-
-      logger.info(`User logged out: ${user.email}`);
-    } catch (error) {
-      logger.error('Logout error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Logout failed',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
-    }
-  }
-
-  /**
-   * Logout from all devices
-   */
-  static async logoutAll(req: AuthenticatedRequest, res: Response): Promise<void> {
-    try {
-      const user = req.user;
-
-      // Revoke all sessions from database
-      await UserModel.revokeAllUserSessions(user.id);
-
-      // Revoke all Firebase refresh tokens
-      await firebaseService.revokeRefreshTokens(user.firebase_uid);
-
-      // Clear current session cookie
-      res.clearCookie('session');
-
-      res.status(200).json({
-        success: true,
-        message: 'Logged out from all devices',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
-
-      logger.info(`User logged out from all devices: ${user.email}`);
-    } catch (error) {
-      logger.error('Logout all error:', error);
-      res.status(500).json({
-        success: false,
-        error: 'Logout from all devices failed',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
-    }
-  }
-
-  /**
-   * Get user profile
-   */
-  static async getProfile(req: AuthenticatedRequest, res: Response): Promise<void> {
-    try {
-      const user = req.user;
-
-      res.status(200).json({
-        success: true,
-        data: {
-          id: user.id,
-          email: user.email,
-          first_name: user.first_name,
-          last_name: user.last_name,
-          avatar_url: user.avatar_url,
-          role: user.role,
-          provider: user.provider,
-          is_active: user.is_active,
-          last_login: user.last_login,
-          created_at: user.created_at,
-          updated_at: user.updated_at
-        },
-        timestamp: new Date().toISOString()
-      } as APIResponse);
+        user: userProfile
+      });
     } catch (error) {
       logger.error('Get profile error:', error);
       res.status(500).json({
         success: false,
-        error: 'Failed to get profile',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
+        message: 'Internal server error'
+      });
     }
   }
 
   /**
-   * Update user profile
+   * Change password
    */
-  static async updateProfile(req: AuthenticatedRequest, res: Response): Promise<void> {
+  static async changePassword(req: Request, res: Response): Promise<void> {
     try {
-      const user = req.user;
-      const { first_name, last_name, avatar_url } = req.body;
+      const userId = (req as any).user.userId;
+      const { currentPassword, newPassword } = req.body;
 
-      const updatedUser = await UserModel.updateProfile(user.id, {
-        first_name,
-        last_name,
-        avatar_url
+      if (!currentPassword || !newPassword) {
+        res.status(400).json({
+          success: false,
+          message: 'Current password and new password are required'
+        });
+        return;
+      }
+
+      const user = await User.findById(userId);
+      if (!user) {
+        res.status(404).json({
+          success: false,
+          message: 'User not found'
+        });
+        return;
+      }
+
+      // Verify current password
+      const isValidPassword = await bcrypt.compare(currentPassword, user.password_hash);
+      if (!isValidPassword) {
+        res.status(401).json({
+          success: false,
+          message: 'Current password is incorrect'
+        });
+        return;
+      }
+
+      // Hash new password
+      const saltRounds = 12;
+      const newPasswordHash = await bcrypt.hash(newPassword, saltRounds);
+
+      // Update password
+      await User.updatePassword(userId, newPasswordHash);
+
+      res.json({
+        success: true,
+        message: 'Password changed successfully'
       });
 
-      res.status(200).json({
-        success: true,
-        data: {
-          id: updatedUser.id,
-          email: updatedUser.email,
-          first_name: updatedUser.first_name,
-          last_name: updatedUser.last_name,
-          avatar_url: updatedUser.avatar_url,
-          role: updatedUser.role,
-          provider: updatedUser.provider,
-          updated_at: updatedUser.updated_at
-        },
-        message: 'Profile updated successfully',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
-
-      logger.info(`Profile updated for user: ${user.email}`);
+      logger.info(`Password changed for user ID: ${userId}`);
     } catch (error) {
-      logger.error('Update profile error:', error);
+      logger.error('Change password error:', error);
       res.status(500).json({
         success: false,
-        error: 'Failed to update profile',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
+        message: 'Internal server error'
+      });
     }
   }
 
   /**
-   * Get Firebase configuration for frontend
+   * Logout (optional - mainly for token blacklisting)
    */
-  static async getFirebaseConfig(req: Request, res: Response): Promise<void> {
+  static async logout(req: Request, res: Response): Promise<void> {
     try {
-      // Only return public configuration
-      res.status(200).json({
+      // In a more complex system, you could blacklist the token here
+      res.json({
         success: true,
-        data: {
-          projectId: process.env.FIREBASE_PROJECT_ID,
-          authDomain: `${process.env.FIREBASE_PROJECT_ID}.firebaseapp.com`,
-          apiKey: process.env.FIREBASE_WEB_API_KEY, // You'll need to add this to env
-          googleClientId: process.env.GOOGLE_CLIENT_ID
-        },
-        timestamp: new Date().toISOString()
-      } as APIResponse);
+        message: 'Logged out successfully'
+      });
     } catch (error) {
-      logger.error('Get Firebase config error:', error);
+      logger.error('Logout error:', error);
       res.status(500).json({
         success: false,
-        error: 'Failed to get Firebase configuration',
-        timestamp: new Date().toISOString()
-      } as APIResponse);
+        message: 'Internal server error'
+      });
     }
   }
 }
