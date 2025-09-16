@@ -58,13 +58,70 @@ export class ProcessingQueue {
 
       // Send to AI service for classification and summarization
       try {
-        const aiResult = await AIService.classifyDocument('', filePath);
+        // Step 1: Update status to processing
+        await DocumentModel.updateAIProcessingResults(documentId, {
+          processing_status: 'processing'
+        });
+
+        // Step 2: Call external classification API
+        logger.info(`Calling external classification API for document ${documentId}`);
+        const classificationResult = await AIService.classifyDocument('', filePath);
         
-        // Update document with AI results (simplified for demo)
-        logger.info(`AI processing completed: ${aiResult.document_type} (confidence: ${aiResult.confidence})`);
+        // Step 3: Call external summary API  
+        logger.info(`Calling external summary API for document ${documentId}`);
+        const summaryResult = await AIService.generateSummary('', filePath, classificationResult.document_type);
+        
+        // Step 4: Update document with combined AI results
+        await DocumentModel.updateAIProcessingResults(documentId, {
+          ai_classification: classificationResult.document_type,
+          classification_confidence: classificationResult.confidence,
+          ai_summary: summaryResult.summary,
+          summary_confidence: summaryResult.confidence,
+          ai_keywords: summaryResult.keywords,
+          extracted_entities: classificationResult.entities || {},
+          classification_api_response: {
+            document_type: classificationResult.document_type,
+            confidence: classificationResult.confidence,
+            processing_time: classificationResult.processing_time
+          },
+          summary_api_response: {
+            summary: summaryResult.summary,
+            keywords: summaryResult.keywords,
+            confidence: summaryResult.confidence,
+            processing_time: summaryResult.processing_time
+          },
+          processing_status: 'completed'
+        });
+        
+        logger.info(`AI processing completed and saved: ${classificationResult.document_type} (classification: ${classificationResult.confidence}, summary: ${summaryResult.confidence})`);
         
       } catch (aiError) {
-        logger.warn('AI processing failed, using basic classification:', aiError);
+        logger.warn('External AI processing failed, using basic classification:', aiError);
+        
+        // Update status to failed first
+        await DocumentModel.updateAIProcessingResults(documentId, {
+          processing_status: 'failed'
+        });
+        
+        try {
+          // Fallback to basic classification if external APIs fail
+          const fallbackResult = await AIService.classifyDocument('', filePath);
+          
+          // Update with fallback results
+          await DocumentModel.updateAIProcessingResults(documentId, {
+            ai_classification: fallbackResult.document_type,
+            classification_confidence: fallbackResult.confidence,
+            ai_summary: fallbackResult.summary || '',
+            ai_keywords: fallbackResult.keywords || [],
+            extracted_entities: fallbackResult.entities || {},
+            processing_status: 'completed'
+          });
+          
+          logger.info(`Fallback processing completed and saved: ${fallbackResult.document_type}`);
+        } catch (fallbackError) {
+          logger.error('Fallback processing also failed:', fallbackError);
+          throw fallbackError;
+        }
       }
 
       logger.info(`Processing completed for document ${documentId}`);

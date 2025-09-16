@@ -8,9 +8,13 @@ import fs from 'fs';
 export class AIService {
   private static instance: AIService;
   private mlServiceURL: string;
+  private classificationAPI: string;
+  private summaryAPI: string;
 
   private constructor() {
     this.mlServiceURL = process.env.PYTHON_ML_SERVICE_URL || 'http://localhost:8000';
+    this.classificationAPI = process.env.ML_CLASSIFICATION_API || 'http://localhost:8000/api/classify';
+    this.summaryAPI = process.env.ML_SUMMARY_API || 'http://localhost:8000/api/summarize';
   }
 
   static getInstance(): AIService {
@@ -93,7 +97,7 @@ export class AIService {
   }
 
   /**
-   * Classify document using Python ML service
+   * Classify document using external ML classification API
    */
   static async classifyDocument(text: string, filePath: string): Promise<AIProcessingResult> {
     try {
@@ -105,11 +109,13 @@ export class AIService {
       const payload = {
         text: text,
         filename: path.basename(filePath),
-        file_type: fileExtension.substring(1) // Remove the dot
+        file_type: fileExtension.substring(1), // Remove the dot
+        content_type: path.extname(filePath).toLowerCase()
       };
 
+      // Call external classification API
       const response = await axios.post(
-        `${aiService.mlServiceURL}/api/classify/document`,
+        aiService.classificationAPI,
         payload,
         {
           headers: {
@@ -121,11 +127,11 @@ export class AIService {
 
       if (response.data.success) {
         const result: AIProcessingResult = {
-          document_type: response.data.category || response.data.document_type,
+          document_type: response.data.category || response.data.document_type || response.data.classification,
           confidence: response.data.confidence,
           processing_time: response.data.processing_time || 0,
-          summary: response.data.summary,
-          keywords: response.data.keywords,
+          summary: response.data.summary || '',
+          keywords: response.data.keywords || [],
           entities: response.data.entities || {
             dates: [],
             amounts: [],
@@ -133,15 +139,68 @@ export class AIService {
           }
         };
 
-        logger.info(`PDF classification completed for ${path.basename(filePath)}: ${result.document_type}`);
+        logger.info(`Document classification completed for ${path.basename(filePath)}: ${result.document_type} (confidence: ${result.confidence})`);
         return result;
       } else {
-        throw new Error(`Classification failed: ${response.data.error || 'Unknown error'}`);
+        throw new Error(`Classification API failed: ${response.data.error || 'Unknown error'}`);
       }
     } catch (error) {
-      logger.error('PDF document classification failed:', error);
+      logger.error('External document classification failed:', error);
       // Return fallback classification
       return this.fallbackClassification(text, filePath);
+    }
+  }
+
+  /**
+   * Generate document summary using external ML summary API
+   */
+  static async generateSummary(text: string, filePath: string, documentType?: string): Promise<{
+    summary: string;
+    keywords: string[];
+    confidence: number;
+    processing_time: number;
+  }> {
+    try {
+      logger.info(`Starting document summary generation for: ${path.basename(filePath)}`);
+      
+      const aiService = AIService.getInstance();
+      
+      const payload = {
+        text: text,
+        filename: path.basename(filePath),
+        document_type: documentType || 'unknown',
+        max_summary_length: 500
+      };
+
+      // Call external summary API
+      const response = await axios.post(
+        aiService.summaryAPI,
+        payload,
+        {
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          timeout: 60000, // 1 minute timeout
+        }
+      );
+
+      if (response.data.success) {
+        const result = {
+          summary: response.data.summary,
+          keywords: response.data.keywords || [],
+          confidence: response.data.confidence || 0.8,
+          processing_time: response.data.processing_time || 0
+        };
+
+        logger.info(`Document summary generated for ${path.basename(filePath)} (${result.summary.length} chars)`);
+        return result;
+      } else {
+        throw new Error(`Summary API failed: ${response.data.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      logger.error('External document summary generation failed:', error);
+      // Return fallback summary
+      return this.fallbackSummary(text, filePath);
     }
   }
 
@@ -161,126 +220,78 @@ export class AIService {
     let departmentRelevance: string[] = [];
     let detectedLanguage: 'english' | 'malayalam' | 'mixed' = 'english';
     
-    // Enhanced KMRL-specific classification rules
+    // Enhanced KMRL-specific classification rules using official categories
     
-    // Engineering and Technical Documents
-    if (filename.includes('drawing') || filename.includes('blueprint') || ['dwg', 'dxf'].includes(extension)) {
-      documentType = 'engineering_drawing';
-      confidence = 0.9;
-      keyPoints = ['Technical drawing', 'Engineering specification', 'Design document'];
-      departmentRelevance = ['METRO_ENGINEERING', 'CIVIL', 'ELECTRICAL'];
-    }
-    else if (filename.includes('spec') || filename.includes('specification') || content.includes('specification')) {
-      documentType = 'technical_specification';
-      confidence = 0.8;
-      keyPoints = ['Technical specification', 'Standards document', 'Requirements'];
-      departmentRelevance = ['METRO_ENGINEERING', 'QUALITY_ASSURANCE'];
+    // Maintenance & Operation
+    if (filename.includes('maintenance') || filename.includes('inspection') || filename.includes('repair') || 
+        filename.includes('operation') || filename.includes('schedule') || content.includes('maintenance') || 
+        content.includes('operation') || ['dwg', 'dxf'].includes(extension)) {
+      documentType = 'maintenance&operation';
+      confidence = 0.85;
+      keyPoints = ['Maintenance activity', 'Operational procedure', 'Equipment status', 'Technical drawing'];
+      departmentRelevance = ['MAINTENANCE', 'OPERATIONS', 'METRO_ENGINEERING'];
     }
     
-    // Maintenance and Operations
-    else if (filename.includes('maintenance') || filename.includes('inspection') || filename.includes('repair')) {
-      documentType = 'maintenance_report';
-      confidence = 0.8;
-      keyPoints = ['Maintenance activity', 'Equipment status', 'Inspection findings'];
-      departmentRelevance = ['MAINTENANCE', 'OPERATIONS', 'SAFETY'];
-    }
-    else if (filename.includes('operation') || filename.includes('schedule') || content.includes('operation')) {
-      documentType = 'operational_manual';
-      confidence = 0.7;
-      keyPoints = ['Operational procedure', 'Service guidelines', 'Process documentation'];
-      departmentRelevance = ['OPERATIONS', 'MAINTENANCE'];
-    }
-    
-    // Financial Documents
-    else if (filename.includes('bill') || filename.includes('invoice') || content.includes('invoice') || content.includes('payment')) {
-      documentType = 'vendor_bill';
-      confidence = 0.8;
-      keyPoints = ['Financial transaction', 'Vendor payment', 'Invoice details'];
+    // Finance & Procurement
+    else if (filename.includes('bill') || filename.includes('invoice') || filename.includes('purchase') || 
+             filename.includes('budget') || filename.includes('financial') || filename.includes('audit') ||
+             content.includes('payment') || content.includes('procurement') || content.includes('budget') ||
+             extension === 'xlsx') {
+      documentType = 'finance&procurement';
+      confidence = 0.85;
+      keyPoints = ['Financial transaction', 'Purchase order', 'Budget allocation', 'Vendor payment'];
       departmentRelevance = ['FINANCE', 'PROCUREMENT'];
     }
-    else if (filename.includes('purchase') || filename.includes('po_') || filename.includes('order') || content.includes('purchase order')) {
-      documentType = 'purchase_order';
-      confidence = 0.8;
-      keyPoints = ['Purchase requisition', 'Procurement order', 'Vendor selection'];
-      departmentRelevance = ['PROCUREMENT', 'FINANCE'];
-    }
-    else if (filename.includes('budget') || filename.includes('financial') || content.includes('budget')) {
-      documentType = 'financial_report';
-      confidence = 0.7;
-      keyPoints = ['Financial analysis', 'Budget allocation', 'Cost report'];
-      departmentRelevance = ['FINANCE', 'ADMINISTRATION'];
-    }
-    else if (filename.includes('audit') || content.includes('audit')) {
-      documentType = 'audit_report';
-      confidence = 0.8;
-      keyPoints = ['Audit findings', 'Compliance review', 'Quality assessment'];
-      departmentRelevance = ['QUALITY_ASSURANCE', 'FINANCE', 'ADMINISTRATION'];
-      complianceFlags = ['audit', 'compliance'];
-    }
     
-    // Safety and Compliance
-    else if (filename.includes('safety') || filename.includes('hazard') || filename.includes('incident') || content.includes('safety')) {
-      documentType = 'safety_notice';
-      confidence = 0.9;
-      keyPoints = ['Safety protocol', 'Hazard identification', 'Risk assessment'];
-      departmentRelevance = ['SAFETY', 'OPERATIONS', 'MAINTENANCE'];
-      complianceFlags = ['safety', 'mandatory'];
-    }
-    else if (filename.includes('compliance') || content.includes('regulation') || content.includes('mandatory')) {
-      documentType = 'compliance_document';
-      confidence = 0.8;
-      keyPoints = ['Regulatory requirement', 'Compliance standard', 'Legal obligation'];
-      departmentRelevance = ['LEGAL', 'ADMINISTRATION', 'SAFETY'];
+    // Compliance & Regulatory
+    else if (filename.includes('compliance') || filename.includes('regulation') || filename.includes('standard') ||
+             filename.includes('audit') || content.includes('regulation') || content.includes('mandatory') ||
+             content.includes('compliance') || content.includes('standard')) {
+      documentType = 'compliance&regulatory';
+      confidence = 0.90;
+      keyPoints = ['Regulatory requirement', 'Compliance standard', 'Legal obligation', 'Audit findings'];
+      departmentRelevance = ['LEGAL', 'ADMINISTRATION', 'QUALITY_ASSURANCE'];
       complianceFlags = ['regulation', 'compliance', 'mandatory'];
     }
     
-    // HR and Administrative
-    else if (filename.includes('policy') || filename.includes('hr') || filename.includes('employee') || content.includes('policy')) {
-      documentType = 'hr_policy';
-      confidence = 0.8;
-      keyPoints = ['HR policy', 'Employee guidelines', 'Organizational procedure'];
-      departmentRelevance = ['HR', 'ADMINISTRATION'];
-    }
-    else if (filename.includes('training') || content.includes('training') || content.includes('education')) {
-      documentType = 'training_material';
-      confidence = 0.7;
-      keyPoints = ['Training content', 'Educational material', 'Skill development'];
-      departmentRelevance = ['HR', 'SAFETY', 'OPERATIONS'];
+    // Safety & Training
+    else if (filename.includes('safety') || filename.includes('training') || filename.includes('hazard') || 
+             filename.includes('incident') || filename.includes('emergency') || content.includes('safety') ||
+             content.includes('training') || content.includes('emergency')) {
+      documentType = 'safety&training';
+      confidence = 0.90;
+      keyPoints = ['Safety protocol', 'Training material', 'Hazard identification', 'Emergency procedure'];
+      departmentRelevance = ['SAFETY', 'HR', 'OPERATIONS'];
+      complianceFlags = ['safety', 'mandatory'];
     }
     
-    // Legal Documents
-    else if (filename.includes('legal') || filename.includes('contract') || filename.includes('agreement') || content.includes('contract')) {
-      documentType = 'legal_opinion';
-      confidence = 0.8;
-      keyPoints = ['Legal analysis', 'Contract terms', 'Legal compliance'];
+    // Human Resources
+    else if (filename.includes('hr') || filename.includes('employee') || filename.includes('policy') || 
+             filename.includes('staff') || filename.includes('personnel') || content.includes('employee') ||
+             content.includes('policy') || content.includes('personnel')) {
+      documentType = 'humanresources';
+      confidence = 0.85;
+      keyPoints = ['HR policy', 'Employee guidelines', 'Personnel management', 'Organizational procedure'];
+      departmentRelevance = ['HR', 'ADMINISTRATION'];
+    }
+    
+    // Legal & Governance
+    else if (filename.includes('legal') || filename.includes('contract') || filename.includes('agreement') || 
+             filename.includes('board') || filename.includes('minutes') || filename.includes('governance') ||
+             content.includes('contract') || content.includes('board') || content.includes('legal')) {
+      documentType = 'legal&governance';
+      confidence = 0.85;
+      keyPoints = ['Legal analysis', 'Contract terms', 'Board decision', 'Governance framework'];
       departmentRelevance = ['LEGAL', 'ADMINISTRATION'];
       complianceFlags = ['legal', 'contract'];
     }
     
-    // Board and Management
-    else if (filename.includes('board') || filename.includes('minutes') || filename.includes('meeting') || content.includes('board')) {
-      documentType = 'board_minutes';
-      confidence = 0.9;
-      keyPoints = ['Board decision', 'Management directive', 'Strategic planning'];
-      departmentRelevance = ['ADMINISTRATION', 'FINANCE', 'OPERATIONS'];
-    }
-    
-    // General document types by extension
-    else if (['pdf', 'doc', 'docx'].includes(extension)) {
-      documentType = 'correspondence';
-      confidence = 0.6;
-      keyPoints = ['Document communication', 'Information sharing'];
-    }
-    else if (['jpg', 'jpeg', 'png', 'bmp', 'tiff'].includes(extension)) {
-      documentType = 'correspondence';
-      confidence = 0.5;
-      keyPoints = ['Image document', 'Visual information'];
-    }
-    else if (extension === 'xlsx') {
-      documentType = 'financial_report';
-      confidence = 0.6;
-      keyPoints = ['Data analysis', 'Spreadsheet information'];
-      departmentRelevance = ['FINANCE'];
+    // General Communication (default fallback)
+    else {
+      documentType = 'general communication';
+      confidence = 0.60;
+      keyPoints = ['Document communication', 'Information sharing', 'General correspondence'];
+      departmentRelevance = ['ADMINISTRATION'];
     }
 
     // Language detection (basic)
@@ -324,6 +335,64 @@ export class AIService {
         departments: departmentRelevance,
         personnel: []
       }
+    };
+  }
+
+  /**
+   * Fallback summary generation when external API fails
+   */
+  private static fallbackSummary(text: string, filePath: string): {
+    summary: string;
+    keywords: string[];
+    confidence: number;
+    processing_time: number;
+  } {
+    const startTime = Date.now();
+    const filename = path.basename(filePath);
+    
+    // Generate basic summary from text
+    let summary = '';
+    let keywords: string[] = [];
+    const confidence = 0.6; // Lower confidence for fallback
+    
+    if (text && text.length > 0) {
+      // Extract first few sentences as summary
+      const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 10);
+      summary = sentences.slice(0, 3).join('. ').trim();
+      
+      if (summary.length > 500) {
+        summary = summary.substring(0, 497) + '...';
+      }
+      
+      // Extract basic keywords (simple word frequency)
+      const words = text.toLowerCase()
+        .replace(/[^\w\s]/g, ' ')
+        .split(/\s+/)
+        .filter(word => word.length > 3 && !['the', 'and', 'for', 'are', 'but', 'not', 'you', 'all', 'can', 'had', 'her', 'was', 'one', 'our', 'out', 'day', 'get', 'has', 'him', 'his', 'how', 'its', 'may', 'new', 'now', 'old', 'see', 'two', 'way', 'who', 'boy', 'did', 'she', 'use', 'her', 'now', 'air', 'any', 'may', 'say'].includes(word));
+      
+      const wordFreq: { [key: string]: number } = {};
+      words.forEach(word => {
+        wordFreq[word] = (wordFreq[word] || 0) + 1;
+      });
+      
+      keywords = Object.entries(wordFreq)
+        .sort(([,a], [,b]) => b - a)
+        .slice(0, 8)
+        .map(([word]) => word);
+    } else {
+      summary = `Document summary for ${filename}`;
+      keywords = ['document', 'file', filename.split('.')[0] || 'unknown'];
+    }
+    
+    const processingTime = Date.now() - startTime;
+    
+    logger.info(`Fallback summary generated for ${filename} (${summary.length} chars)`);
+    
+    return {
+      summary,
+      keywords,
+      confidence,
+      processing_time: processingTime
     };
   }
 

@@ -10,9 +10,11 @@ export class DocumentModel {
         INSERT INTO documents (
           filename, original_filename, file_size, mime_type, file_path,
           file_hash, project_id, department, uploaded_by, urgency_level,
-          ai_summary, ai_keywords, processing_status
+          ai_summary, ai_keywords, processing_status, ai_classification,
+          classification_confidence, summary_confidence, extracted_entities,
+          classification_api_response, summary_api_response, processing_started_at
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
         RETURNING *
       `;
       
@@ -29,7 +31,14 @@ export class DocumentModel {
         documentData.urgency_level || 'routine',
         documentData.ai_summary || null,
         documentData.ai_keywords || null,
-        documentData.processing_status || 'pending'
+        documentData.processing_status || 'pending',
+        documentData.ai_classification || null,
+        documentData.classification_confidence || null,
+        documentData.summary_confidence || null,
+        JSON.stringify(documentData.extracted_entities || {}),
+        JSON.stringify(documentData.classification_api_response || {}),
+        JSON.stringify(documentData.summary_api_response || {}),
+        documentData.processing_started_at || new Date()
       ];
       
       const result = await client.query(query, values);
@@ -102,6 +111,62 @@ export class DocumentModel {
       logger.info(`Document status updated: ${id} -> ${status}`);
     } catch (error) {
       logger.error('Error updating document status:', error);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  /**
+   * Update document with external AI processing results
+   */
+  static async updateAIProcessingResults(id: number, results: {
+    ai_classification?: string;
+    classification_confidence?: number;
+    ai_summary?: string;
+    summary_confidence?: number;
+    ai_keywords?: string[];
+    extracted_entities?: Record<string, any>;
+    classification_api_response?: Record<string, any>;
+    summary_api_response?: Record<string, any>;
+    processing_status: 'processing' | 'completed' | 'failed';
+  }): Promise<void> {
+    const client = await pgPool.connect();
+    try {
+      const query = `
+        UPDATE documents SET 
+          ai_classification = $1,
+          classification_confidence = $2,
+          ai_summary = $3,
+          summary_confidence = $4,
+          ai_keywords = $5,
+          extracted_entities = $6,
+          classification_api_response = $7,
+          summary_api_response = $8,
+          processing_status = $9,
+          processing_completed_at = $10,
+          updated_at = NOW()
+        WHERE id = $11
+      `;
+      
+      const values = [
+        results.ai_classification || null,
+        results.classification_confidence || null,
+        results.ai_summary || null,
+        results.summary_confidence || null,
+        results.ai_keywords || null,
+        JSON.stringify(results.extracted_entities || {}),
+        JSON.stringify(results.classification_api_response || {}),
+        JSON.stringify(results.summary_api_response || {}),
+        results.processing_status,
+        results.processing_status === 'completed' ? new Date() : null,
+        id
+      ];
+
+      await client.query(query, values);
+      logger.info(`Document AI processing results updated: ${id} -> ${results.processing_status}`);
+    } catch (error) {
+      logger.error('Error updating document AI processing results:', error);
       throw error;
     } finally {
       client.release();
