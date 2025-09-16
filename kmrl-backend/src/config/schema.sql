@@ -1,5 +1,22 @@
--- KMRL Document Management System Database Schema
--- PostgreSQL Database Schema
+-- KMRL Document Management System Database Schema    -- KMRL-specific fields
+    department VARCHAR(50), -- Engineering, Finance, HR, Safety, Legal, Operations
+    document_type VARCHAR(50), -- Official KMRL classification types
+    urgency_level VARCHAR(20) DEFAULT 'normal' CHECK (urgency_level IN ('urgent', 'high', 'normal', 'low')),
+    
+    -- External AI processing results (updated for external APIs)
+    ai_summary TEXT, -- Summary from external ML API
+    ai_classification VARCHAR(100), -- Classification from external ML API
+    classification_confidence DECIMAL(5,4) CHECK (classification_confidence >= 0 AND classification_confidence <= 1), -- From classification API
+    summary_confidence DECIMAL(5,4) CHECK (summary_confidence >= 0 AND summary_confidence <= 1), -- From summary API
+    ai_keywords TEXT[], -- Keywords from external AI APIs
+    extracted_entities JSONB DEFAULT '{}', -- Entities extracted by external AI
+    processing_status VARCHAR(20) DEFAULT 'pending' CHECK (processing_status IN ('pending', 'processing', 'completed', 'failed')),
+    
+    -- External API processing metadata
+    classification_api_response JSONB, -- Store full response from classification API
+    summary_api_response JSONB, -- Store full response from summary API
+    processing_started_at TIMESTAMP,
+    processing_completed_at TIMESTAMP,eSQL Database Schema
 
 -- Enable UUID extension
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
@@ -63,7 +80,6 @@ CREATE TABLE IF NOT EXISTS documents (
     -- Basic metadata
     project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
     uploaded_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
-    status VARCHAR(50) DEFAULT 'processed' CHECK (status IN ('processing', 'processed', 'failed')),
     tags TEXT[],
     
     created_at TIMESTAMP DEFAULT NOW(),
@@ -111,10 +127,14 @@ CREATE INDEX IF NOT EXISTS idx_users_department ON users(department);
 CREATE INDEX IF NOT EXISTS idx_documents_department ON documents(department);
 CREATE INDEX IF NOT EXISTS idx_documents_document_type ON documents(document_type);
 CREATE INDEX IF NOT EXISTS idx_documents_urgency_level ON documents(urgency_level);
+CREATE INDEX IF NOT EXISTS idx_documents_processing_status ON documents(processing_status);
+CREATE INDEX IF NOT EXISTS idx_documents_ai_classification ON documents(ai_classification);
+CREATE INDEX IF NOT EXISTS idx_documents_classification_confidence ON documents(classification_confidence);
 CREATE INDEX IF NOT EXISTS idx_documents_file_hash ON documents(file_hash);
 CREATE INDEX IF NOT EXISTS idx_documents_project_id ON documents(project_id);
 CREATE INDEX IF NOT EXISTS idx_documents_uploaded_by ON documents(uploaded_by);
 CREATE INDEX IF NOT EXISTS idx_documents_created_at ON documents(created_at);
+CREATE INDEX IF NOT EXISTS idx_documents_processing_completed_at ON documents(processing_completed_at);
 
 CREATE INDEX IF NOT EXISTS idx_projects_department ON projects(department);
 CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id ON user_sessions(user_id);
@@ -136,16 +156,16 @@ CREATE TRIGGER update_users_updated_at BEFORE UPDATE ON users FOR EACH ROW EXECU
 CREATE TRIGGER update_projects_updated_at BEFORE UPDATE ON projects FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_documents_updated_at BEFORE UPDATE ON documents FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
--- Insert KMRL-specific document classifications
+-- Insert Official KMRL Document Classifications (Updated)
 INSERT INTO document_classifications (name, description, department, urgency_level) VALUES
-('Engineering Drawing', 'CAD drawings and technical blueprints', 'Engineering', 'normal'),
-('Safety Notice', 'Safety alerts and compliance documents', 'Safety', 'urgent'),
-('Maintenance Report', 'Equipment maintenance and inspection reports', 'Engineering', 'high'),
-('Financial Invoice', 'Vendor bills and purchase orders', 'Finance', 'normal'),
-('HR Policy', 'Human resources policies and procedures', 'HR', 'normal'),
-('Legal Opinion', 'Legal advice and compliance documents', 'Legal', 'high'),
-('Board Minutes', 'Board meeting minutes and decisions', 'Management', 'high'),
-('Permit Document', 'Government permits and licenses', 'Legal', 'urgent'),
-('Operations Report', 'Daily operations and performance reports', 'Operations', 'normal'),
-('Training Material', 'Employee training and development content', 'HR', 'low')
-ON CONFLICT (name) DO NOTHING;
+('maintenance&operation', 'Equipment maintenance, operational procedures, technical drawings', 'Engineering', 'high'),
+('finance&procurement', 'Bills, invoices, purchase orders, budgets, financial reports', 'Finance', 'normal'),
+('compliance&regulatory', 'Regulatory documents, compliance standards, audit reports', 'Legal', 'urgent'),
+('safety&training', 'Safety protocols, training materials, emergency procedures', 'Safety', 'urgent'),
+('humanresources', 'HR policies, employee guidelines, personnel management', 'HR', 'normal'),
+('legal&governance', 'Contracts, legal opinions, board minutes, governance documents', 'Legal', 'high'),
+('general communication', 'General correspondence, memos, notices', 'Administration', 'low')
+ON CONFLICT (name) DO UPDATE SET
+    description = EXCLUDED.description,
+    department = EXCLUDED.department,
+    urgency_level = EXCLUDED.urgency_level;

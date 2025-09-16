@@ -7,6 +7,11 @@
 ### 🚄 ABOUT KMRL SOLUTION
 This system solves Kochi Metro Rail Ltd.'s daily challenge of processing **thousands of documents** across engineering, maintenance, finance, HR, safety, and legal departments. It provides **AI-powered summaries** and **department-specific routing** to eliminate time waste and improve coordination.
 
+**🤖 External AI Integration:**
+- **Classification API**: `POST /api/classify` - Analyzes document type with confidence scores
+- **Summary API**: `POST /api/summarize` - Generates intelligent document summaries
+- **Separate Processing**: Classification and summarization happen via external ML APIs for scalability
+
 **Key Benefits:**
 - ⏰ **80% time savings** - Get document summaries in seconds
 - 🎯 **Smart routing** - Right info to right departments  
@@ -20,6 +25,17 @@ This system solves Kochi Metro Rail Ltd.'s daily challenge of processing **thous
 - **POST** `/api/auth/change-password` - Change password (protected)
 - **POST** `/api/auth/logout` - User logout (protected)
 - **POST** `/api/auth/create-user` - Create new user (admin only)
+
+### 🏷️ KMRL DOCUMENT CLASSIFICATION TYPES
+The AI system classifies documents into these specific categories:
+
+1. **`maintenance&operation`** - Equipment maintenance, operational procedures, technical drawings
+2. **`finance&procurement`** - Bills, invoices, purchase orders, budgets, financial reports
+3. **`compliance&regulatory`** - Regulatory documents, compliance standards, audit reports
+4. **`safety&training`** - Safety protocols, training materials, emergency procedures
+5. **`humanresources`** - HR policies, employee guidelines, personnel management
+6. **`legal&governance`** - Contracts, legal opinions, board minutes, governance documents
+7. **`general communication`** - General correspondence, memos, notices
 
 ### 📁 DOCUMENT ROUTES (NEW!)
 - **POST** `/api/documents/upload` - **🎯 Main ML Processing Route**
@@ -113,7 +129,7 @@ curl -X POST http://localhost:3000/api/documents/upload \
 {
   "ai_summary": "Emergency protocol for monsoon operations: Speed restrictions of 40km/h during heavy rainfall, mandatory water level monitoring at all stations, emergency contact procedures activated.",
   "ai_keywords": ["monsoon", "safety", "speed_restriction", "emergency", "rainfall"],
-  "document_type": "SAFETY_PROTOCOL",
+  "document_type": "safety&training",
   "compliance_tags": ["WEATHER_OPERATIONS", "SAFETY_CRITICAL"],
   "affected_departments": ["OPERATIONS", "METRO_ENGINEERING", "TRACK_SYSTEMS"]
 }
@@ -274,7 +290,7 @@ curl -X GET http://localhost:3000/api/documents/1/summary \
   "ai_intelligence": {
     "summary": "Emergency safety protocol for monsoon operations: Speed restrictions of 40km/h during heavy rainfall, mandatory water level monitoring at all stations, emergency contact procedures activated.",
     "keywords": ["monsoon", "safety", "speed_restriction", "emergency", "rainfall"],
-    "document_type": "SAFETY_PROTOCOL",
+    "document_type": "safety&training",
     "confidence": 0.94,
     "language_detected": "english",
     "urgency_analysis": "urgent",
@@ -352,31 +368,14 @@ curl -X GET http://localhost:3000/api/documents \
 
 ## 📋 KMRL DOCUMENT TYPES SUPPORTED
 
-**Engineering & Technical:**
-- `engineering_drawing` - CAD files, blueprints, technical drawings
-- `technical_specification` - Equipment specs, design standards
-
-**Operations & Maintenance:**
-- `maintenance_report` - Inspection reports, repair records
-- `operational_manual` - SOPs, operational procedures
-
-**Financial & Procurement:**
-- `vendor_bill` - Invoices, payment documents
-- `purchase_order` - PO documents, procurement requests
-- `financial_report` - Budget reports, financial statements
-- `audit_report` - Internal/external audit findings
-
-**Safety & Compliance:**
-- `safety_notice` - Safety alerts, hazard notifications
-- `compliance_document` - Regulatory compliance files
-
-**Administrative:**
-- `hr_policy` - HR policies, employee handbooks
-- `legal_opinion` - Legal advice, contract reviews
-- `board_minutes` - Board meeting minutes, decisions
-- `training_material` - Training docs, educational content
-
-**Communication:**
+**🏷️ AI Classification Types (Official KMRL Categories):**
+- `maintenance&operation` - Equipment maintenance, operational procedures, technical drawings
+- `finance&procurement` - Bills, invoices, purchase orders, budgets, financial reports  
+- `compliance&regulatory` - Regulatory documents, compliance standards, audit reports
+- `safety&training` - Safety protocols, training materials, emergency procedures
+- `humanresources` - HR policies, employee guidelines, personnel management
+- `legal&governance` - Contracts, legal opinions, board minutes, governance documents
+- `general communication` - General correspondence, memos, notices
 - `correspondence` - Emails, letters, official communication
 - `TRACK_SYSTEMS`
 - `ELECTRICAL`
