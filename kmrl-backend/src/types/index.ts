@@ -40,21 +40,39 @@ export interface Document {
   department: string;
   uploaded_by: number;
   urgency_level: 'routine' | 'priority' | 'urgent' | 'critical';
-  document_type?: 'engineering_drawing' | 'maintenance_report' | 'vendor_bill' | 'purchase_order' | 'safety_notice' | 'hr_policy' | 'legal_opinion' | 'board_minutes' | 'compliance_document' | 'training_material' | 'operational_manual' | 'financial_report' | 'audit_report' | 'correspondence' | 'technical_specification' | 'other';
+  
+  // Updated document types to match KMRL official categories
+  document_type?: 'maintenance&operation' | 'finance&procurement' | 'compliance&regulatory' | 'safety&training' | 'humanresources' | 'legal&governance' | 'general communication';
+  
   language?: 'english' | 'malayalam' | 'mixed';
+  
+  // External AI API results
   ai_summary?: string;
   ai_keywords?: string[];
+  ai_classification?: string; // From external classification API
+  classification_confidence?: number; // Confidence from classification API
+  summary_confidence?: number; // Confidence from summary API
+  extracted_entities?: Record<string, any>; // Entities from external AI
+  
+  // External API response storage
+  classification_api_response?: Record<string, any>; // Full response from classification API
+  summary_api_response?: Record<string, any>; // Full response from summary API
+  
+  // Processing metadata
   key_points?: string[];
   compliance_flags?: string[];
   processing_status: 'pending' | 'processing' | 'completed' | 'failed';
+  processing_started_at?: Date;
+  processing_completed_at?: Date;
+  
   created_at: Date;
-  processed_at?: Date;
+  updated_at: Date;
 }
 
 export interface DocumentClassification {
   id: number;
   document_id: number;
-  classification_type: 'engineering_drawing' | 'maintenance_report' | 'vendor_bill' | 'purchase_order' | 'safety_notice' | 'hr_policy' | 'legal_opinion' | 'board_minutes' | 'compliance_document' | 'training_material' | 'operational_manual' | 'financial_report' | 'audit_report' | 'correspondence' | 'technical_specification' | 'other';
+  classification_type: 'maintenance&operation' | 'finance&procurement' | 'compliance&regulatory' | 'safety&training' | 'humanresources' | 'legal&governance' | 'general communication';
   confidence_score: number;
   department_relevance: string[];
   priority_level: 'low' | 'medium' | 'high' | 'critical';
